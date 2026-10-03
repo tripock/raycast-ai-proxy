@@ -10,7 +10,7 @@
 
 import http from "node:http";
 import { createHash, createHmac, randomUUID } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, appendFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -162,15 +162,22 @@ async function doLogin() {
 }
 
 let tokenPromise = null;
+function extractFromApp() {
+  // достаём токен из базы залогиненного приложения их же нативным аддоном
+  try {
+    const out = execFileSync(process.execPath, [path.join(DIR, "extract-token.mjs"), "--write"], { windowsHide: true, timeout: 60_000 }).toString();
+    log(out.trim());
+    return readToken();
+  } catch (e) { log("извлечение токена из приложения не удалось:", String(e.message ?? e).slice(0, 200)); return null; }
+}
 async function ensureToken(forceLogin = false) {
   let t = readToken();
   if (!forceLogin && tokenFresh(t)) return t;
   if (t?.refresh_token) { const n = await refreshToken(t); if (n) return n; }
-  if (forceLogin || !t?.refresh_token) {
-    if (!tokenPromise) tokenPromise = doLogin().finally(() => { tokenPromise = null; });
-    return tokenPromise;
-  }
-  return t;
+  const ex = extractFromApp();
+  if (tokenFresh(ex)) return ex;
+  if (!tokenPromise) tokenPromise = doLogin().finally(() => { tokenPromise = null; });
+  return tokenPromise;
 }
 
 // ── каталог моделей (GET /api/v1/ai/models — публичный) ───────────────────────
@@ -296,9 +303,9 @@ async function handleChat(req, res) {
     const r = await fetch(`${API}/api/v1/ai/chat_completions`, {
       method: "POST", headers: signedHeaders(bodyStr, deviceTag, tok?.access_token), body: bodyStr,
     });
-    if ((r.status === 401 || r.status === 403)) {
-      const n = await ensureToken(true); // форс-логин не нужен — пробуем refresh/re-login
-      if (n?.access_token && n !== tok) {
+    if (r.status === 401 || r.status === 403) {
+      const n = await refreshToken(readToken()); // без браузера: только refresh
+      if (n?.access_token) {
         const r2 = await fetch(`${API}/api/v1/ai/chat_completions`, {
           method: "POST", headers: signedHeaders(bodyStr, deviceTag, n.access_token), body: bodyStr });
         return r2;
@@ -399,10 +406,10 @@ if (arg1 === "--catch") {
 }
 
 if (arg1 === "--gen-models") {
-  getCatalog(true).then((c) => { console.log(genModelsYml()); process.exit(0); },
+  getCatalog(true).then(() => { console.log(genModelsYml()); process.exitCode = 0; },
     (e) => die(`каталог недоступен: ${e.message}`));
 } else if (arg1 === "--refresh") {
-  refreshToken(readToken()).then((t) => { t ? log("ok") : die("refresh failed"); process.exit(0); });
+  refreshToken(readToken()).then((t) => { if (!t) die("refresh failed"); else { log("ok"); process.exitCode = 0; } });
 } else if (arg1 === "--logout") {
   try { unlinkSync(TOKEN_FILE); log("токен удалён"); } catch {}
   process.exit(0);

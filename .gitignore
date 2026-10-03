@@ -2,5 +2,6 @@ token.json
 device.json
 login-code.txt
 catalog-cache.json
+vendor/
 *.log
 node_modules/

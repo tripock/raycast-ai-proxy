@@ -1,7 +1,13 @@
 # raycast-bridge
 
-OpenAI-совместимый прокси к Raycast AI. Один файл (`server.mjs`), ноль зависимостей.
+OpenAI-совместимый прокси к Raycast AI. Два файла логики (`server.mjs` + `extract-token.mjs`), ноль зависимостей.
 Даёт все встроенные модели Raycast (GPT, Claude, Gemini, Grok, GLM, Kimi, DeepSeek, Qwen, Perplexity — 80+ штук) любому OpenAI-клиенту — включая OMP.
+
+## Требование
+
+**Приложение Raycast должно быть установлено и залогинено в твоём аккаунте.**
+Прокси сам достаёт OAuth-токен из базы данных залогиненного приложения (их же нативным аддоном, ключ базы читается из Windows Credential Manager). Никаких ручных ключей.
+Каждый, кто хочет юзать этот прокси — сначала логинится в приложение Raycast на своей машине. Точка.
 
 ## Запуск (одна команда)
 
@@ -9,19 +15,17 @@ OpenAI-совместимый прокси к Raycast AI. Один файл (`se
 npm start
 ```
 
-или `node server.mjs`. При первом запуске мост **сам** откроет браузер для входа в аккаунт Raycast, перехватит OAuth-код (через временный HKCU-оверрайд схемы `com.raycast://`), обменяет его на токен и сохранит в `token.json` (в git не попадает). Дальше стартует сервер:
+или `node server.mjs`. Сервер поднимается на `http://127.0.0.1:8787/v1` мгновенно; токен подтянется автоматически при первом чат-запросе (из token.json, если уже сохранён, иначе из базы приложения).
 
-- `GET  http://127.0.0.1:8787/v1/models` — каталог (живой, без авторизации)
-- `POST http://127.0.0.1:8787/v1/chat/completions` — чат (stream и обычный)
-- `GET  http://127.0.0.1:8787/healthz`
+- `GET  /v1/models` — каталог (живой, без авторизации)
+- `POST /v1/chat/completions` — чат (stream и обычный, tools поддерживаются)
+- `GET  /healthz`
 
-Токен протух → авто-refresh (`refresh_token`); refresh не удался → повторный логин.
-
-> Если код авторизации не перехватился за 5 минут — закрой приложение Raycast (оно могло съесть deeplink) и запусти снова.
+Токен протух → refresh через `refresh_token`; не вышло → снова извлечение из базы приложения; совсем ничего → fallback на браузерный OAuth (откроет окно входа Raycast).
 
 ## Подключение к OMP
 
-`~/.omp/agent/models.yml`:
+В `~/.omp/agent/models.yml` уже вшит провайдер `raycast`:
 
 ```yaml
 providers:
@@ -29,29 +33,39 @@ providers:
     baseUrl: http://127.0.0.1:8787/v1
     auth: none
     api: openai-completions
-    models:
-      - id: openai-gpt-5.5
-        name: GPT-5.5
-        ...
+    models: ...
 ```
 
-Полный блок на все модели: `npm run models` (генерируется из живого каталога).
+Выбор модели: `omp m raycast/anthropic-claude-sonnet-5` (или через `/model` в TUI). Обновить список моделей: `npm run models` — печатает свежий YAML-блок из живого каталога.
 
 ## Команды
 
 | Команда | Что делает |
 |---|---|
-| `npm start` | логин (если надо) + сервер |
-| `npm run models` | напечатать YAML-блок моделей для OMP |
+| `npm start` | сервер (+ авто-токен при запросе) |
+| `node extract-token.mjs --write` | вручную перечитать токен из приложения |
+| `npm run models` | YAML-блок моделей для OMP |
 | `npm run refresh` | принудительный refresh токена |
-| `npm run logout` | удалить токен |
+| `npm run logout` | удалить token.json |
 
-## Как это работает (реверс)
+## Как получить токен руками (если очень надо)
 
-- Эндпоинт: `POST https://backend.raycast.com/api/v1/ai/chat_completions` (SSE-стрим, OpenAI-подобное тело: `{model, provider, messages, tools, buffer_id}`).
-- Подпись: `X-Raycast-Signature-v2 = HMAC-SHA256(secret, rot13+5(ts '.' deviceId '.' sha256hex(body)))` — секрет статически зашит в `Raycast.dll` (`Secrets.get_SignatureSecret`).
+`token.json` в папке проекта — внутри `access_token` (`rca_…`). Это и есть bearer для `Authorization: Bearer …` к `backend.raycast.com/api/v1/ai/chat_completions`. Но одного bearer мало — запрос ещё подписывается `X-Raycast-Signature-v2` (HMAC ключ зашит в Raycast.dll), мост делает это за тебя.
+
+## Как это работает (реверс Raycast 2.6.1.0, MS Store)
+
+- Эндпоинт: `POST https://backend.raycast.com/api/v1/ai/chat_completions` (SSE, OpenAI-подобное тело `{model, provider, messages, tools, buffer_id}`).
+- Каталог: `GET /api/v1/ai/models` — публичный, без авторизации.
+- Подпись: `X-Raycast-Signature-v2 = HMAC-SHA256(secret, rot13+5(ts '.' deviceId '.' sha256hex(body)))`, секрет статичен в `Raycast.dll` (`Secrets.get_SignatureSecret`).
 - `X-Raycast-DeviceId = sha256(SMBIOS_UUID + Serial + "xK7mQ2vLpN8wY4jR6tBfHsAeDc" + "Production")`.
-- Bearer — OAuth PKCE (S256) с родным client_id Raycast: authorize `www.raycast.com/oauth/authorize` → токен `backend.raycast.com/oauth/token`.
-- Всё это выверено по `backend/index.mjs` и `Raycast.dll` версии 2.6.1.0 (MS Store).
+- Токен: лежит в зашифрованной SQLite (`%LOCALAPPDATA%\Raycast`) под ключом `OAuthTokenResponse`; ключ базы — в Windows Credential Manager (`Raycast-Production/BackendDBKey`); codecs — их нативный аддон `data.win32-x64-msvc.node` (копия в `vendor/`, N-API, грузится любым Node ≥ 18).
+- OAuth-параметры (fallback): client_id `FRsHICIAlyPB_…`, PKCE S256, authorize `www.raycast.com/oauth/authorize`, токен `backend.raycast.com/oauth/token`.
 
-Env-переменные: `RAYCAST_BRIDGE_PORT` (8787), `RAYCAST_DEVICE_TAG`, `RAYCAST_DEVICE_UUID`, `RAYCAST_DEVICE_SERIAL`, `RAYCAST_API`.
+## Куда что кладётся
+
+- `token.json` — токен (git-ignored)
+- `device.json` — вычисленный deviceTag (git-ignored)
+- `catalog-cache.json` — кэш каталога (git-ignored)
+- `vendor/` — `node.exe` и `data.win32-x64-msvc.node` из приложения (git-ignored, обнови при апгрейде Raycast)
+
+Env: `RAYCAST_BRIDGE_PORT` (8787), `RAYCAST_SUPPORT_DIR`, `RAYCAST_CRED_TARGET`, `RAYCAST_BACKEND_DB_KEY`, `RAYCAST_DEVICE_TAG`, `RAYCAST_API`.
