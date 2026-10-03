@@ -31,6 +31,8 @@ const CATALOG_CACHE = path.join(DIR, "catalog-cache.json");
 const UA = "Raycast/2.6.1.0 (x-Windows Version 10.0.26100)";
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+process.on("unhandledRejection", (e) => log("unhandledRejection:", e?.stack ?? e));
+process.on("uncaughtException", (e) => log("uncaughtException:", e?.stack ?? e));
 const die = (msg) => { console.error(msg); process.exit(1); };
 const run = (cmd, args) => new Promise((res) => execFile(cmd, args, { windowsHide: true }, (err, stdout) => res({ err, stdout: String(stdout ?? "") })));
 
@@ -320,6 +322,7 @@ async function handleChat(req, res) {
 
   if (!up.ok && !(up.headers.get("content-type") ?? "").includes("event-stream")) {
     const t = await up.text();
+    log("upstream HTTP", up.status, "body:", t.slice(0, 500), "| model:", id);
     return json(res, up.status === 401 || up.status === 403 ? 401 : 502,
       { error: { message: `raycast ${up.status}: ${t.slice(0, 400)}`, type: "api_error" } });
   }
@@ -341,7 +344,11 @@ async function handleChat(req, res) {
   try {
     for await (const ev of upstreamEvents(up)) {
       if (ev == null || typeof ev !== "object") continue;
-      if (ev.error) { errMsg = ev.error.message ?? ev.error.userMessage ?? JSON.stringify(ev.error).slice(0, 300); break; }
+      if (ev.error) {
+        errMsg = ev.error.message ?? ev.error.userMessage ?? JSON.stringify(ev.error).slice(0, 300);
+        log("upstream error event:", JSON.stringify(ev.error).slice(0, 500), "| model:", id, "| status:", up.status);
+        break;
+      }
       let delta = null;
       if (typeof ev.text === "string" && ev.text) { content += ev.text; delta = { ...(delta ?? {}), content: ev.text }; }
       if (typeof ev.reasoning === "string" && ev.reasoning) { reasoning += ev.reasoning; delta = { ...(delta ?? {}), reasoning_content: ev.reasoning }; }
@@ -361,12 +368,19 @@ async function handleChat(req, res) {
 
   const finish_reason = errMsg ? "error" : sawTools ? "tool_calls" : "stop";
   if (wantStream) {
-    if (errMsg) res.write(mk({ content: `\n[raycast-bridge error: ${errMsg}]` }));
+    if (errMsg) {
+      // OpenAI-совместимый error-чанк + человекочитаемое сообщение
+      res.write(`data: ${JSON.stringify({ error: { message: errMsg, type: /limit|try again/i.test(errMsg) ? "rate_limit_error" : "api_error", code: /limit|try again/i.test(errMsg) ? "rate_limit_exceeded" : undefined } })}\n\n`);
+      res.write(mk({ content: `\n[raycast-bridge error: ${errMsg}]` }));
+    }
     res.write(mk({}, finish_reason, usage));
     res.write("data: [DONE]\n\n");
     res.end();
   } else {
-    if (errMsg) return json(res, 502, { error: { message: errMsg, type: "api_error" } });
+    if (errMsg) {
+      const limited = /limit|try again/i.test(errMsg);
+      return json(res, limited ? 429 : 502, { error: { message: errMsg, type: limited ? "rate_limit_error" : "api_error", code: limited ? "rate_limit_exceeded" : undefined } });
+    }
     const message = { role: "assistant", content };
     if (reasoning) message.reasoning_content = reasoning;
     if (toolCalls.length) message.tool_calls = toolCalls.map(({ index, ...t }) => t);

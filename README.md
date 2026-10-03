@@ -78,4 +78,8 @@ providers:
 
 Env: `RAYCAST_BRIDGE_PORT` (8787), `RAYCAST_SUPPORT_DIR`, `RAYCAST_CRED_TARGET`, `RAYCAST_BACKEND_DB_KEY`, `RAYCAST_DEVICE_TAG`, `RAYCAST_API`.
 
+## Лимиты
+
+У аккаунта без подписки (free trial) Raycast даёт **~25 AI-запросов в час** — бэкенд отвечает ошибкой «free trial limit … try again in N minutes». Мост пробрасывает её как HTTP 429 / `rate_limit_error`. Имей в виду: агентские харнессы (OMP и подобные) жгут запросы пачками (основной запрос + фоновые tiny/advisor) — не ставь raycast-модели на роли `@smol`/`@tiny`/`@default`, выбирай их руками под задачу. Модели с `requires_better_ai` требуют подписку Raycast Pro.
+
 As-is, без гарантий. Обновил Raycast — удали `vendor/`, мост перекачает свежий аддон при следующем запуске.
