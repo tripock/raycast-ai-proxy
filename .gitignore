@@ -5,3 +5,5 @@ catalog-cache.json
 vendor/
 *.log
 node_modules/
+*.out
+t.json

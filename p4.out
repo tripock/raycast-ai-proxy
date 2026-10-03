@@ -1,8 +1,0 @@
-data: {"id":"chatcmpl-dc07bf31da9d456a86748b73","object":"chat.completion.chunk","created":1791046405,"model":"openai-gpt-6.1-sol","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-dc07bf31da9d456a86748b73","object":"chat.completion.chunk","created":1791046405,"model":"openai-gpt-6.1-sol","choices":[{"index":0,"delta":{"content":"\n[raycast-bridge error: You've reached your free trial limit of 25 AI requests per hour. Upgrade to Raycast Pro to continue, or try again in 7 minutes.]"},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-dc07bf31da9d456a86748b73","object":"chat.completion.chunk","created":1791046405,"model":"openai-gpt-6.1-sol","choices":[{"index":0,"delta":{},"finish_reason":"error"}]}
-
-data: [DONE]
-
