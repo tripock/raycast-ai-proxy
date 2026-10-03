@@ -12,8 +12,8 @@ OpenAI-совместимый прокси к Raycast AI. Два файла ло
 ## Установка и запуск
 
 ```
-git clone <этот-репо> raycast-bridge
-cd raycast-bridge
+git clone https://github.com/tripock/raycast-ai-proxy.git
+cd raycast-ai-proxy
 npm start
 ```
 
