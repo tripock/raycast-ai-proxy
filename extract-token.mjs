@@ -6,7 +6,7 @@
 
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, readdirSync } from "node:fs";
+import { cpSync, copyFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,40 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const SUPPORT_DIR = process.env.RAYCAST_SUPPORT_DIR || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Raycast");
 const CRED_TARGET = process.env.RAYCAST_CRED_TARGET || "Raycast-Production/BackendDBKey";
 const die = (m) => { console.error(m); process.exit(1); };
+
+// ── vendor: авто-подхват нативного аддона из установленного приложения ────────
+function findRaycastBackendDir() {
+  if (process.env.RAYCAST_APP_DIR) return process.env.RAYCAST_APP_DIR;
+  try {
+    const loc = execFileSync("powershell", ["-NoProfile", "-Command", "(Get-AppxPackage Raycast).InstallLocation"],
+      { windowsHide: true, timeout: 30_000 }).toString().trim();
+    if (loc) {
+      const be = path.join(loc, "Raycast", "backend");
+      if (existsSync(path.join(be, "data.win32-x64-msvc.node"))) return be;
+    }
+  } catch {}
+  // fallback: прямое сканирование WindowsApps (работает без admin не всегда)
+  try {
+    const wa = "C:\\Program Files\\WindowsApps";
+    for (const pkg of readdirSync(wa).filter((n) => /^Raycast\.Raycast_.*x64__/.test(n)).sort().reverse()) {
+      const be = path.join(wa, pkg, "Raycast", "backend");
+      if (existsSync(path.join(be, "data.win32-x64-msvc.node"))) return be;
+    }
+  } catch {}
+  return null;
+}
+
+function ensureVendor() {
+  const vendorDir = path.join(DIR, "vendor");
+  const addonPath = path.join(vendorDir, "data.win32-x64-msvc.node");
+  if (existsSync(addonPath)) return addonPath;
+  const be = findRaycastBackendDir();
+  if (!be) die("инсталляция Raycast не найдена (Get-AppxPackage пуст). Скопируй data.win32-x64-msvc.node из <приложение>/backend/ в vendor/ или укажи RAYCAST_APP_DIR");
+  mkdirSync(vendorDir, { recursive: true });
+  copyFileSync(path.join(be, "data.win32-x64-msvc.node"), addonPath);
+  console.error(`vendor: скопирован аддон из ${be}`);
+  return addonPath;
+}
 
 function readBackendKey() {
   if (process.env.RAYCAST_BACKEND_DB_KEY) return process.env.RAYCAST_BACKEND_DB_KEY;
@@ -70,6 +104,7 @@ if (!copied) { rmSync(tmp, { recursive: true, force: true }); die(`в ${SUPPORT_
 // 3. открываем их же аддоном
 let tokenRaw = null, errDetail = "", client = null;
 try {
+  ensureVendor();
   const require2 = createRequire(import.meta.url);
   const addon = require2("./vendor/data.win32-x64-msvc.node");
   const logcb = () => {}; // r_t() из бандла возвращает (message, meta) => void
