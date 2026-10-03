@@ -1,0 +1,6 @@
+token.json
+device.json
+login-code.txt
+catalog-cache.json
+*.log
+node_modules/

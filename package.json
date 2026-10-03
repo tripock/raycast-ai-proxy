@@ -1,0 +1,13 @@
+{
+  "name": "raycast-bridge",
+  "version": "1.0.0",
+  "description": "OpenAI-совместимый прокси к Raycast AI (подпись X-Raycast-Signature-v2, авто-логин, модели GPT/Claude/Gemini/Grok/GLM/Kimi/DeepSeek/Qwen)",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "models": "node server.mjs --gen-models",
+    "refresh": "node server.mjs --refresh",
+    "logout": "node server.mjs --logout"
+  },
+  "engines": { "node": ">=18" }
+}
